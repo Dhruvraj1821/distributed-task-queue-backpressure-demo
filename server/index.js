@@ -25,6 +25,9 @@ const jobQueue = new Queue("jobQueue", {
   connection: redisConnection,
 });
 
+// queue to track throttled workers
+const throttledWorkers = new Set();
+
 // Server state
 let producerSpeed = 50;
 let lastBackpressureWorker = null;
@@ -40,9 +43,10 @@ io.on("connection", (socket) => {
 
   // Worker sends backpressure
   socket.on("backpressure", (data) => {
-    console.log(`Backpressure from ${data.worker}`);
+    throttledWorkers.add(data.worker);
     producerSpeed = 500;
     lastBackpressureWorker = data.worker;
+    console.log(`Backpressure from ${data.worker} | throttled: [${[...throttledWorkers]}]`);
 
     io.emit("backpressure", {
       worker: data.worker,
@@ -53,14 +57,18 @@ io.on("connection", (socket) => {
 
   // Worker sends all-clear
   socket.on("all-clear", (data) => {
-    console.log(`All-clear from ${data.worker}`);
-    producerSpeed = 50;
-
-    io.emit("all-clear", {
-      worker: data.worker,
-      producerSpeed,
-      timestamp: Date.now(),
-    });
+    throttledWorkers.delete(data.worker);
+    console.log(`All-clear from ${data.worker} | still throttled: [${[...throttledWorkers]}]`);
+    
+    if(throttledWorkers.size === 0){
+      producerSpeed = 50;
+      io.emit("all-clear", {
+        worker: data.worker,
+        producerSpeed,
+        timestamp: Date.now(),
+      });
+      console.log(`All workers clear → producer resuming at ${producerSpeed}ms`);
+    }
   });
 
   socket.on("disconnect", () => {
