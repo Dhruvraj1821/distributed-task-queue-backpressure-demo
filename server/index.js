@@ -26,7 +26,7 @@ const jobQueue = new Queue("jobQueue", {
 });
 
 // Server state
-let producerSpeed = 200;
+let producerSpeed = 50;
 let lastBackpressureWorker = null;
 
 // Express route
@@ -41,7 +41,7 @@ io.on("connection", (socket) => {
   // Worker sends backpressure
   socket.on("backpressure", (data) => {
     console.log(`Backpressure from ${data.worker}`);
-    producerSpeed = 800;
+    producerSpeed = 500;
     lastBackpressureWorker = data.worker;
 
     io.emit("backpressure", {
@@ -54,7 +54,7 @@ io.on("connection", (socket) => {
   // Worker sends all-clear
   socket.on("all-clear", (data) => {
     console.log(`All-clear from ${data.worker}`);
-    producerSpeed = 200;
+    producerSpeed = 50;
 
     io.emit("all-clear", {
       worker: data.worker,

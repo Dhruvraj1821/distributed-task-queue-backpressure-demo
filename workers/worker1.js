@@ -21,28 +21,46 @@ let throttled = false;
 const worker = new Worker(
   "jobQueue",
   async (job) => {
-    activeJobs++;
-
-    if (activeJobs > 8 && !throttled) {
-      throttled = true;
-      socket.emit("backpressure", { worker: workerName });
-      console.log(`${workerName} sent BACKPRESSURE`);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    activeJobs--;
-
-    if (activeJobs < 4 && throttled) {
-      throttled = false;
-      socket.emit("all-clear", { worker: workerName });
-      console.log(`${workerName} sent ALL-CLEAR`);
-    }
+    // no counter tracking here (trying to solve a race condition in initail worker logic)
+    // check out previous commit it had a manual counter for active jobs which causes
+    // race condition(the increments and decrements interleave unpredictably)
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   },
   {
     connection: redisConnection,
     concurrency: 10,
   }
 );
+// refactored the code below to match current worker logic.
+
+worker.on("active", () => {
+  activeJobs++;
+
+  if (activeJobs > 8 && !throttled) {
+    throttled = true;
+    socket.emit("backpressure", { worker: workerName });
+    console.log(`${workerName} sent BACKPRESSURE`);
+  }
+});
+
+worker.on("completed", () => {
+  activeJobs--;
+
+  if (activeJobs < 4 && throttled) {
+    throttled = false;
+    socket.emit("all-clear", { worker: workerName });
+    console.log(`${workerName} sent ALL-CLEAR`);
+  }
+});
+
+worker.on("failed", () => {
+  activeJobs--;
+
+  if (activeJobs < 4 && throttled) {
+    throttled = false;
+    socket.emit("all-clear", { worker: workerName });
+    console.log(`${workerName} sent ALL-CLEAR`);
+  }
+});
 
 console.log(`${workerName} started`);

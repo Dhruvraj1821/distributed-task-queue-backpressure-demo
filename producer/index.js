@@ -18,7 +18,7 @@ const jobQueue = new Queue("jobQueue", {
 // Socket connection
 const socket = io(process.env.SERVER_URL);
 
-let intervalTime = 200;
+let intervalTime = 50;
 let jobId = 0;
 let interval;
 
@@ -45,13 +45,13 @@ socket.on("connect", () => {
 
 socket.on("backpressure", () => {
   console.log("Backpressure received -> slowing down producer");
-  intervalTime = 800;
+  intervalTime = 500;
   startProducing();
 });
 
 socket.on("all-clear", () => {
   console.log("All-clear received -> speeding up producer");
-  intervalTime = 200;
+  intervalTime = 50;
   startProducing();
 });
 
