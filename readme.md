@@ -2,11 +2,9 @@
 
 ## Overview
 
-This project implements a distributed job processing system with backpressure signaling, dynamic producer throttling, and a real-time monitoring dashboard. The system demonstrates how producers and workers coordinate in a distributed environment to prevent overload and maintain system stability.
+This project implements a distributed job processing system with backpressure signaling, dynamic producer throttling, a real-time monitoring dashboard, and production-grade observability using Prometheus and Grafana.
 
-A producer continuously generates jobs and pushes them into a BullMQ queue backed by Redis. Multiple workers process jobs concurrently. When workers become overloaded, they send a backpressure signal that slows the producer. When workers recover, they send an all-clear signal and the producer resumes normal speed. A React dashboard displays queue depth, worker status, producer speed, and backpressure events in real time.
-
-This project demonstrates core distributed systems concepts such as queues, worker pools, concurrency control, feedback loops, and system observability.
+A producer continuously generates jobs and pushes them into a BullMQ queue backed by Redis. Multiple workers process jobs concurrently. When workers become overloaded, they send a backpressure signal that slows the producer. When all workers recover, they send an all-clear signal and the producer resumes normal speed. A React dashboard displays queue depth, worker status, producer speed, and backpressure events in real time. Prometheus scrapes metrics from the server every 5 seconds and Grafana visualizes them on a live dashboard.
 
 ---
 
@@ -22,27 +20,35 @@ Backpressure is commonly used in streaming systems, message queues, distributed 
 
 ```
                 React Dashboard
-                        ↑
-                        |
+                      ↑
+                      |
 Producer ←→ Server ←→ Workers
-                  |
-                BullMQ
-                  |
-                 Redis
+              |
+           BullMQ
+              |
+            Redis
+              
+Prometheus ← scrapes ── Server (/metrics)
+      ↑
+   Grafana
 ```
 
-### Flow
+---
 
-1. Producer generates jobs continuously.
+## System Flow
+
+1. Producer generates jobs continuously at 50ms intervals.
 2. Jobs are added to a BullMQ queue stored in Redis.
-3. Workers consume and process jobs concurrently.
-4. Workers monitor their active job count.
-5. When a worker exceeds 80% capacity, it sends a backpressure signal.
-6. The server broadcasts the signal to the producer.
-7. The producer slows down job creation.
-8. When worker load drops below 40%, an all-clear signal is sent.
-9. The producer resumes normal speed.
-10. The dashboard displays queue depth, worker status, producer speed, and events in real time.
+3. Three workers consume and process jobs concurrently (concurrency: 10 each).
+4. Workers monitor their active job count via BullMQ worker events.
+5. When a worker exceeds 80% capacity (8/10 jobs), it sends a backpressure signal.
+6. The server adds that worker to a throttled set and broadcasts the signal to the producer.
+7. The producer slows down to 500ms per job.
+8. When a worker's load drops below 40% (4/10 jobs), it sends an all-clear signal.
+9. The server removes that worker from the throttled set.
+10. Only when all workers have cleared does the producer resume at 50ms.
+11. The React dashboard displays queue depth, worker states, producer speed, and events in real time.
+12. Prometheus scrapes `/metrics` every 5 seconds and Grafana visualizes the data.
 
 ---
 
@@ -58,7 +64,10 @@ Producer ←→ Server ←→ Workers
 | Frontend                | React (Vite)      |
 | Styling                 | Tailwind CSS      |
 | Charts                  | Recharts          |
-| Redis Deployment        | Docker            |
+| Metrics                 | prom-client       |
+| Monitoring              | Prometheus        |
+| Visualization           | Grafana           |
+| Containerization        | Docker            |
 
 ---
 
@@ -79,6 +88,7 @@ backpressure-demo/
     package.json
   dashboard/
     (React Vite App)
+  prometheus.yml
   docker-compose.yml
   README.md
 ```
@@ -87,23 +97,33 @@ backpressure-demo/
 
 ## Backpressure Configuration
 
-| Parameter                | Value           |
-| ------------------------ | --------------- |
-| Worker concurrency       | 10              |
-| Backpressure threshold   | Active jobs > 8 |
-| All-clear threshold      | Active jobs < 4 |
-| Producer normal speed    | 200 ms/job      |
-| Producer throttled speed | 800 ms/job      |
-
-Workers signal backpressure at 80% capacity and recovery at 40% capacity.
+| Parameter                  | Value                 |
+| -------------------------- | --------------------- |
+| Worker concurrency         | 10                    |
+| Backpressure threshold     | Active jobs > 8 (80%) |
+| All-clear threshold        | Active jobs < 4 (40%) |
+| Producer normal speed      | 50 ms/job             |
+| Producer throttled speed   | 500 ms/job            |
+| Prometheus scrape interval | 5s                    |
 
 ---
 
-## How to Run the System Locally
+## Prometheus Metrics
 
-### 1. Start Redis (Docker)
+| Metric                    | Type    | Description                            |
+| ------------------------- | ------- | -------------------------------------- |
+| queue_depth               | Gauge   | Total jobs in queue (waiting + active) |
+| jobs_waiting              | Gauge   | Jobs waiting to be processed           |
+| jobs_active               | Gauge   | Jobs currently being processed         |
+| producer_speed_ms         | Gauge   | Current producer interval in ms        |
+| backpressure_events_total | Counter | Total backpressure signals received    |
+| allclear_events_total     | Counter | Total all-clear signals received       |
 
-From the root folder:
+---
+
+## How to Run
+
+### 1. Start Redis, Prometheus, and Grafana
 
 ```
 docker-compose up -d
@@ -123,21 +143,12 @@ cd producer
 npm start
 ```
 
-### 4. Start Workers (Open 3 Terminals)
+### 4. Start Workers (3 separate terminals)
 
 ```
-cd workers
-npm run worker1
-```
-
-```
-cd workers
-npm run worker2
-```
-
-```
-cd workers
-npm run worker3
+cd workers && npm run worker1
+cd workers && npm run worker2
+cd workers && npm run worker3
 ```
 
 ### 5. Start Dashboard
@@ -147,63 +158,50 @@ cd dashboard
 npm run dev
 ```
 
-Open browser:
-
-```
-http://localhost:5173
-```
-
 ---
 
-## System Behavior
+## Access Points
 
-When the system runs:
+| Service          | URL                                                            |
+| ---------------- | -------------------------------------------------------------- |
+| React Dashboard  | [http://localhost:5173](http://localhost:5173)                 |
+| Server           | [http://localhost:3001](http://localhost:3001)                 |
+| Metrics Endpoint | [http://localhost:3001/metrics](http://localhost:3001/metrics) |
+| Prometheus       | [http://localhost:9090](http://localhost:9090)                 |
+| Grafana          | [http://localhost:3000](http://localhost:3000)                 |
 
-* The producer continuously creates jobs.
-* Workers process jobs concurrently.
-* If workers become overloaded, they send backpressure.
-* The producer slows down job creation.
-* Once workers recover, they send an all-clear signal.
-* The producer speeds up again.
-* The dashboard shows queue depth, worker states, producer speed, and backpressure events.
-* The system automatically stabilizes queue depth using feedback control.
+Grafana default credentials: **admin / admin**
 
 ---
 
 ## Concepts Demonstrated
 
-This project demonstrates:
-
 * Distributed job queues
-* Worker pools
-* Concurrency control
-* Backpressure signaling
-* Producer throttling
+* Worker pools and concurrency control
+* Backpressure signaling and producer throttling
 * Feedback control systems
-* Real-time monitoring dashboards
+* Per-worker throttle state tracking
+* Real-time monitoring with Socket.io
+* Production observability with Prometheus and Grafana
 * Queue depth visualization
 * Event-driven architecture
-* Redis-based message queues
+* Containerized infrastructure with Docker
 
 ---
 
 ## Possible Improvements
 
-Future enhancements could include:
-
-* Job retry and failure queues
+* Job retry and dead letter queues
 * Job priority queues
-* Worker autoscaling
+* Worker autoscaling based on queue depth
 * Rate limiting
-* Authentication for dashboard
-* Persistent metrics storage
-* Prometheus / Grafana integration
 * Kubernetes deployment
 * Kafka instead of Redis
-* Dead letter queues
+* Persistent Grafana dashboards via provisioning
+* Alerting rules in Prometheus
 
 ---
 
 ## Summary
 
-This project is a simplified distributed system that demonstrates how producers, queues, workers, and monitoring systems interact using backpressure to maintain system stability. It models real-world distributed processing systems used in large-scale applications.
+This project demonstrates a distributed job processing system with dynamic backpressure control, real-time monitoring, and production-style observability using Prometheus and Grafana. It models real-world distributed processing architectures used in large-scale backend systems.
